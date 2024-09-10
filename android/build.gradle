@@ -1,40 +1,91 @@
-group 'com.yoonjaepark.flutter_naver_login'
-version '1.0-SNAPSHOT'
-
-rootProject.allprojects {
+allprojects {
     repositories {
         google()
         mavenCentral()
     }
 }
 
-// apply plugin: 'com.android.library'
-// apply plugin: 'kotlin-android'
+rootProject.buildDir = '../build'
+subprojects {
+    afterEvaluate { project ->
+        if (project.hasProperty('android')) {
+            project.android {
+                if (namespace == null) {
+                    namespace project.group
+                }
+            }
+        }
+        if (project.plugins.hasPlugin("com.android.application") ||
+                project.plugins.hasPlugin("com.android.library")) {
+            project.android {
+                compileSdkVersion 34
+                buildToolsVersion "34.0.0"
+            }
+        }
 
-plugins {
-    id "com.android.application"
-    id "kotlin-android"
-    id "dev.flutter.flutter-gradle-plugin"
+        if (project.hasProperty('android')) {
+            project.android {
+                if (namespace == null || namespace.isEmpty()) {
+                    def defaultNamespace = project.group.toString().replace('.', '_')
+                    namespace = defaultNamespace
+                }
+
+                buildFeatures {
+                    buildConfig = true
+                }
+            }
+
+            // Task to ensure namespace and remove package attribute
+            project.tasks.register("fixManifestsAndNamespace") {
+                doLast {
+                    // Ensure namespace in build.gradle
+                    def buildGradleFile = file("${project.projectDir}/build.gradle")
+                        if (buildGradleFile.exists()) {
+                            def buildGradleContent = buildGradleFile.getText('UTF-8')
+                            def manifestFile = file("${project.projectDir}/src/main/AndroidManifest.xml")
+                            if (manifestFile.exists()) {
+                                def manifestContent = manifestFile.getText('UTF-8')
+                                def packageName = manifestContent.find(/package="([^"]+)"/) { match, p -> p }
+
+                                if (packageName && !buildGradleContent.contains("namespace")) {
+                                    println "Setting namespace in ${buildGradleFile}"
+                                    buildGradleContent = buildGradleContent.replaceFirst(
+                                        /android\s*\{/, "android {\n    namespace '${packageName}'"
+                                    )
+                                    buildGradleFile.write(buildGradleContent, 'UTF-8')
+                                }
+                            }
+                        }
+
+                    // Remove package attribute from AndroidManifest.xml
+                    def manifests = fileTree(dir: project.projectDir, includes: ['**/AndroidManifest.xml'], excludes: [
+                        './app/src/main/AndroidManifest.xml',
+                        // '**/flutter_inappwebview_android'
+                    ])
+                    manifests.each { File manifestFile ->
+                        def manifestContent = manifestFile.getText('UTF-8')
+                        if (manifestContent.contains('package=')) {
+                            println "Removing package attribute from ${manifestFile}"
+                            manifestContent = manifestContent.replaceAll(/package="[^"]*"/, '')
+                            manifestFile.write(manifestContent, 'UTF-8')
+                        }
+                    }
+                }
+            }
+
+            // Ensure the task runs before the build process
+            project.tasks.matching { it.name.startsWith("preBuild") }.all {
+                dependsOn project.tasks.named("fixManifestsAndNamespace")
+            }
+        }
+    }
+
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+subprojects {
+    project.evaluationDependsOn(':app')
 }
 
-android {
-    compileSdkVersion 28
-
-    sourceSets {
-        main.java.srcDirs += 'src/main/kotlin'
-    }
-    defaultConfig {
-        minSdkVersion 21
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-    }
-    lintOptions {
-        disable 'InvalidPackage'
-    }
-}
-
-dependencies {
-    implementation "com.navercorp.nid:oauth:5.4.0" // jdk 11
-    // implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
-    // implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.0.1"
-    // implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.0.1"
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
 }
